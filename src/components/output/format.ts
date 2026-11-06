@@ -53,6 +53,7 @@ export function formatValue(value: SerializedValue, quoteStrings = true): string
     case 'date':
     case 'regexp':
     case 'unknown':
+    case 'repr':
       return value.v
     case 'error':
       return value.message ? `${value.name}: ${value.message}` : value.name

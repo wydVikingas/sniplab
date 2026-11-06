@@ -20,7 +20,7 @@ export function buildSnippet(patch: SnippetPatch = {}, now = Date.now()): Snippe
     code: LANGUAGE_INFO[language].starter,
     folderId: null,
     favorite: false,
-    runSettings: { timeoutMs: DEFAULT_TIMEOUT_MS, allowNetwork: false },
+    runSettings: { timeoutMs: DEFAULT_TIMEOUT_MS, allowNetwork: false, stdin: '' },
     ...patch,
     tags: normalizeTags(patch.tags ?? []),
     language,

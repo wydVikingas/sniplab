@@ -115,16 +115,44 @@ describe('SnipLab app', () => {
     expect(screen.getByText('42')).toBeInTheDocument()
     expect(await screen.findByText('Finished in 12 ms')).toBeInTheDocument()
     expect(fakeSandbox.run).toHaveBeenCalledWith(
-      { code: 'console.log(1)', timeoutMs: 5_000, allowNetwork: false },
+      {
+        language: 'javascript',
+        code: 'console.log(1)',
+        timeoutMs: 5_000,
+        allowNetwork: false,
+        stdin: '',
+      },
       expect.anything(),
     )
   })
 
-  it('disables Run for languages the sandbox cannot execute yet', async () => {
-    const { id } = await createSnippet({ language: 'python' })
+  it('shows start-up progress, then passes saved stdin to Python runs', async () => {
+    let finish: (value: unknown) => void = () => {}
+    fakeSandbox.run.mockImplementation((_request: RunRequest, callbacks: RunCallbacks) => {
+      callbacks.onStatus?.('Starting Python…')
+      return { outcome: new Promise((resolve) => (finish = resolve)), stop: vi.fn() }
+    })
+    const { id } = await createSnippet({ language: 'python', code: 'print(input())' })
     renderApp(`/s/${id}`)
-    expect(await screen.findByRole('button', { name: '▶ Run' })).toBeDisabled()
-    expect(screen.getByText(/Running Python isn't supported yet/)).toBeInTheDocument()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Input' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /Standard input/ }), {
+      target: { value: 'Ada' },
+    })
+    expect(screen.getByText('input()')).toBeInTheDocument()
+    await waitFor(async () => {
+      const [saved] = await listSnippets()
+      expect(saved?.runSettings.stdin).toBe('Ada')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '▶ Run' }))
+    expect(await screen.findByText('Starting Python…')).toBeInTheDocument()
+    expect(fakeSandbox.run).toHaveBeenLastCalledWith(
+      expect.objectContaining({ language: 'python', code: 'print(input())', stdin: 'Ada' }),
+      expect.anything(),
+    )
+    finish({ status: 'completed', durationMs: 3 })
+    expect(await screen.findByText('Finished in 3 ms')).toBeInTheDocument()
   })
 
   it('shows a not-found message for unknown snippets', async () => {

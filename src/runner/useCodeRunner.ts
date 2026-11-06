@@ -16,7 +16,10 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 type NewEntry = DistributiveOmit<OutputEntry, 'id'>
 
 export type RunnerState =
-  { phase: 'idle' } | { phase: 'running' } | { phase: 'finished'; outcome: RunOutcome }
+  | { phase: 'idle' }
+  /** `detail` describes preparation progress, e.g. "Downloading Python… 3.1 / 12.1 MB". */
+  | { phase: 'running'; detail: string | null }
+  | { phase: 'finished'; outcome: RunOutcome }
 
 /**
  * Runs code in the shared sandbox and collects its output. Output is buffered and flushed
@@ -29,6 +32,7 @@ export function useCodeRunner() {
   const bufferRef = useRef<OutputEntry[]>([])
   const rafRef = useRef<number | null>(null)
   const nextIdRef = useRef(0)
+  const runTokenRef = useRef(0)
 
   const flush = useCallback(() => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
@@ -46,17 +50,22 @@ export function useCodeRunner() {
       rafRef.current = null
       bufferRef.current = []
       setEntries([])
-      setState({ phase: 'running' })
+      setState({ phase: 'running', detail: null })
 
       const push = (entry: NewEntry) => {
         bufferRef.current.push({ ...entry, id: nextIdRef.current++ } as OutputEntry)
         rafRef.current ??= requestAnimationFrame(flush)
       }
 
-      const handle = getSandbox().run(request, {
+      // Callbacks may fire before `run` returns, so identify this run by a token, not its handle.
+      const token = ++runTokenRef.current
+      const handle: RunHandle = getSandbox().run(request, {
         onLog: (level, args) => push({ kind: 'log', level, args }),
         onResult: (value) => push({ kind: 'result', value }),
         onError: (error) => push({ kind: 'error', error }),
+        onStatus: (detail) => {
+          if (runTokenRef.current === token) setState({ phase: 'running', detail })
+        },
       })
       handleRef.current = handle
 

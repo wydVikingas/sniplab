@@ -10,6 +10,8 @@ export const MAX_TIMEOUT_MS = 30_000
 export const runSettingsSchema = z.object({
   timeoutMs: z.number().int().min(100).max(MAX_TIMEOUT_MS),
   allowNetwork: z.boolean(),
+  /** Text fed to the snippet's standard input (Python `input()`, JS `readInput()`). */
+  stdin: z.string().max(100_000),
 })
 export type RunSettings = z.infer<typeof runSettingsSchema>
 

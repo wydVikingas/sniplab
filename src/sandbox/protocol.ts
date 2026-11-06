@@ -29,6 +29,8 @@ export type SerializedValue =
   | { t: 'circular' }
   | { t: 'getter' }
   | { t: 'unknown'; v: string }
+  /** A language-native representation shown verbatim, e.g. Python's `repr()`. */
+  | { t: 'repr'; v: string }
   /** Nesting/size budget reached; shown as e.g. `[Object]`. */
   | { t: 'depth'; kind: 'array' | 'object' | 'map' | 'set'; ctor: string | null }
   | { t: 'array'; ctor: string | null; length: number; items: SerializedValue[] }
@@ -62,6 +64,7 @@ export const serializedValueSchema: z.ZodType<SerializedValue> = z.lazy(() =>
     z.object({ t: z.literal('circular') }),
     z.object({ t: z.literal('getter') }),
     z.object({ t: z.literal('unknown'), v: shortString }),
+    z.object({ t: z.literal('repr'), v: shortString }),
     z.object({ t: z.literal('depth'), kind: z.enum(['array', 'object', 'map', 'set']), ctor }),
     z.object({
       t: z.literal('array'),
@@ -104,9 +107,17 @@ export type RunError = z.infer<typeof runErrorSchema>
 
 const runIdSchema = z.string().min(1).max(100)
 
+export const SANDBOX_RUNTIMES = ['javascript', 'python'] as const
+export const sandboxRuntimeSchema = z.enum(SANDBOX_RUNTIMES)
+export type SandboxRuntime = z.infer<typeof sandboxRuntimeSchema>
+
 /** Messages the sandbox sends to the host. */
 export const sandboxMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
+  /** The runtime is loaded and user code starts now; the run timeout starts here. */
+  z.object({ type: z.literal('started'), runId: runIdSchema }),
+  /** Progress while preparing, e.g. "Installing numpy…". */
+  z.object({ type: z.literal('status'), runId: runIdSchema, text: z.string().max(500) }),
   z.object({
     type: z.literal('log'),
     runId: runIdSchema,
@@ -116,18 +127,38 @@ export const sandboxMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('result'), runId: runIdSchema, value: serializedValueSchema }),
   z.object({ type: z.literal('error'), runId: runIdSchema, error: runErrorSchema }),
   z.object({ type: z.literal('done'), runId: runIdSchema }),
+  /** The Python runtime asks the host to fetch a file it may not fetch itself. */
+  z.object({
+    type: z.literal('asset-request'),
+    requestId: z.number().int().nonnegative(),
+    url: z.string().max(2_000),
+    accept: z.string().max(500).nullable(),
+  }),
 ])
 export type SandboxMessage = z.infer<typeof sandboxMessageSchema>
 
 /** Messages the host sends to the sandbox. */
-export const hostMessageSchema = z.object({
-  type: z.literal('run'),
-  runId: runIdSchema,
-  runtime: z.literal('javascript'),
-  /** ES module source; if `hasResult`, it exports the last expression as RESULT_EXPORT. */
-  source: z.string(),
-  hasResult: z.boolean(),
-  resultExport: z.literal(RESULT_EXPORT),
-  maxLogs: z.number().int().positive(),
-})
-export type HostMessage = z.infer<typeof hostMessageSchema>
+export type HostMessage =
+  | {
+      type: 'run'
+      runId: string
+      runtime: SandboxRuntime
+      /** JS: an ES module that, if `hasResult`, exports the last expression as RESULT_EXPORT. */
+      source: string
+      hasResult: boolean
+      resultExport: typeof RESULT_EXPORT
+      maxLogs: number
+      stdin: string
+      /** Python packages to install with micropip before running. */
+      packages: string[]
+    }
+  | { type: 'prewarm'; runtime: 'python' }
+  | {
+      type: 'asset-response'
+      requestId: number
+      ok: true
+      status: number
+      contentType: string
+      body: ArrayBuffer
+    }
+  | { type: 'asset-response'; requestId: number; ok: false; error: string }

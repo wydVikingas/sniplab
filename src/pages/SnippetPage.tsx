@@ -22,15 +22,6 @@ import { useCodeRunner } from '../runner/useCodeRunner'
 import { getSandbox } from '../sandbox/SandboxHost'
 import { NotFound } from './NotFound'
 
-/** Languages the sandbox can execute so far. */
-const RUNNABLE: ReadonlySet<Language> = new Set(['javascript'])
-
-function cannotRunReason(language: Language): string | null {
-  return RUNNABLE.has(language)
-    ? null
-    : `Running ${LANGUAGE_INFO[language].label} isn't supported yet — only JavaScript for now.`
-}
-
 // Monaco is large: load it only when a snippet is opened.
 const CodeEditor = lazy(() => import('../editor/CodeEditor'))
 
@@ -105,14 +96,12 @@ function SnippetEditor({ initial }: { initial: Snippet }) {
   const runner = useCodeRunner()
   const editorApiRef = useRef<EditorApi | null>(null)
   const [mobilePane, setMobilePane] = useState<SplitPaneSide>('first')
-  const runReason = cannotRunReason(draft.language)
 
   const runCode = () => {
     const { code, language, runSettings } = draftRef.current
-    if (cannotRunReason(language)) return
     editorApiRef.current?.setErrorMarker(null)
     setMobilePane('second')
-    void runner.run({ code, ...runSettings })
+    void runner.run({ language, code, ...runSettings })
   }
   const runCodeRef = useRef(runCode)
   useEffect(() => {
@@ -145,10 +134,11 @@ function SnippetEditor({ initial }: { initial: Snippet }) {
   }, [saver])
 
   // Boot the sandbox in the background so the first run starts instantly.
+  const { language } = draft
   const { allowNetwork } = draft.runSettings
   useEffect(() => {
-    if (runReason === null) getSandbox().prewarm(allowNetwork)
-  }, [runReason, allowNetwork])
+    getSandbox().prewarm(language, allowNetwork)
+  }, [language, allowNetwork])
 
   // Underline the failing line in the editor.
   const firstError = runner.entries.find((e) => e.kind === 'error' && e.error.line !== null)
@@ -282,8 +272,8 @@ function SnippetEditor({ initial }: { initial: Snippet }) {
           <OutputPanel
             entries={runner.entries}
             state={runner.state}
-            cannotRunReason={runReason}
             runSettings={draft.runSettings}
+            stdinHint={draft.language === 'python' ? 'input()' : 'readInput()'}
             onRun={runCode}
             onStop={runner.stop}
             onClear={runner.clear}

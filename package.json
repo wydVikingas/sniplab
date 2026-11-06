@@ -22,8 +22,10 @@
     "dexie": "^4.4.7",
     "dexie-react-hooks": "^4.4.0",
     "monaco-editor": "^0.57.0",
+    "pyodide": "^314.0.7",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "sucrase": "^3.35.1",
     "zod": "^4.6.7",
     "zustand": "^5.0.16"
   },

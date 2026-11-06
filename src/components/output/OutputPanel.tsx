@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef } from 'react'
+import { memo, useId, useLayoutEffect, useRef, useState } from 'react'
 import { DEFAULT_TIMEOUT_MS, type RunSettings } from '../../db/schema'
 import { statusText } from '../../runner/status'
 import type { OutputEntry, RunnerState } from '../../runner/useCodeRunner'
@@ -11,9 +11,9 @@ const TIMEOUT_OPTIONS = [1_000, 3_000, DEFAULT_TIMEOUT_MS, 10_000, 30_000]
 export interface OutputPanelProps {
   entries: OutputEntry[]
   state: RunnerState
-  /** Set when the snippet can't be run; shown instead of the Run button's normal hint. */
-  cannotRunReason: string | null
   runSettings: RunSettings
+  /** Language-specific hint for reading stdin, e.g. "input()". */
+  stdinHint: string
   onRun(): void
   onStop(): void
   onClear(): void
@@ -24,8 +24,8 @@ export interface OutputPanelProps {
 export function OutputPanel({
   entries,
   state,
-  cannotRunReason,
   runSettings,
+  stdinHint,
   onRun,
   onStop,
   onClear,
@@ -35,6 +35,8 @@ export function OutputPanel({
   const running = state.phase === 'running'
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
+  const [stdinOpen, setStdinOpen] = useState(runSettings.stdin !== '')
+  const stdinId = useId()
 
   useLayoutEffect(() => {
     const el = scrollRef.current
@@ -60,9 +62,8 @@ export function OutputPanel({
           <button
             type="button"
             onClick={onRun}
-            disabled={cannotRunReason !== null}
-            title={cannotRunReason ?? 'Run (Ctrl+Enter)'}
-            className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Run (Ctrl+Enter)"
+            className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500"
           >
             ▶ Run
           </button>
@@ -102,6 +103,15 @@ export function OutputPanel({
           </label>
           <button
             type="button"
+            aria-expanded={stdinOpen}
+            aria-controls={stdinId}
+            onClick={() => setStdinOpen((open) => !open)}
+            className="rounded px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            Input{runSettings.stdin !== '' && ' •'}
+          </button>
+          <button
+            type="button"
             onClick={onClear}
             disabled={entries.length === 0}
             className="rounded px-2 py-1 hover:bg-zinc-100 disabled:opacity-40 dark:hover:bg-zinc-800"
@@ -110,6 +120,22 @@ export function OutputPanel({
           </button>
         </div>
       </div>
+
+      {stdinOpen && (
+        <div id={stdinId} className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+          <label className="mb-1 block text-xs text-zinc-500">
+            Standard input — read it with <code className="font-mono">{stdinHint}</code>
+            <textarea
+              value={runSettings.stdin}
+              onChange={(e) => onRunSettingsChange({ ...runSettings, stdin: e.target.value })}
+              rows={3}
+              spellCheck={false}
+              placeholder="One line per value"
+              className="mt-1 block w-full resize-y rounded border border-zinc-300 bg-transparent px-2 py-1 font-mono text-[13px] text-zinc-900 focus:border-indigo-500 focus:outline-none dark:border-zinc-700 dark:text-zinc-100"
+            />
+          </label>
+        </div>
+      )}
 
       <div
         ref={scrollRef}
@@ -122,12 +148,11 @@ export function OutputPanel({
       >
         {entries.length === 0 ? (
           <p className="p-3 font-sans text-sm text-zinc-500">
-            {cannotRunReason ??
-              (state.phase === 'finished'
-                ? 'No output.'
-                : state.phase === 'running'
-                  ? 'Waiting for output…'
-                  : 'Press Run or Ctrl+Enter to execute this snippet.')}
+            {state.phase === 'finished'
+              ? 'No output.'
+              : state.phase === 'running'
+                ? 'Waiting for output…'
+                : 'Press Run or Ctrl+Enter to execute this snippet.'}
           </p>
         ) : (
           entries.map((entry) => <OutputRow key={entry.id} entry={entry} onJumpTo={onJumpTo} />)

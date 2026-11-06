@@ -14,8 +14,8 @@ A developer's personal library of code snippets. Users create, organize, search,
 - Search: MiniSearch full-text index over title, description, tags, and code, kept in sync with the DB.
 - Execution:
   - JavaScript: native, inside the sandbox described below.
-  - TypeScript: transpiled in-browser with esbuild-wasm (or sucrase), then run as JS.
-  - Python: Pyodide (WebAssembly CPython), lazy-loaded only when first needed.
+  - TypeScript: types stripped in-browser with Sucrase (line-preserving; no type checking at run time — the editor shows type errors), then run as JS.
+  - Python: Pyodide (WebAssembly CPython), lazy-loaded only when first needed. The core runtime (~13 MB) is bundled with the app; extra packages come from the Pyodide CDN and PyPI. The sandbox can't fetch these itself, so the app fetches them on its behalf from an allowlist (pinned Pyodide CDN path, pypi.org, files.pythonhosted.org) — this works even when the snippet's network access is off.
 - PWA via vite-plugin-pwa (app shell + Pyodide assets cached after first load).
 - Optional backend (last milestone): Hono + SQLite (Drizzle) for share links.
 - Tooling: oxlint, Prettier, Vitest (unit), Playwright (E2E), GitHub Actions CI.
@@ -97,7 +97,7 @@ No user accounts beyond what sharing needs, no real-time collaboration, no serve
 - [x] **0. Setup** — Vite + React + TS scaffold, Tailwind, oxlint, Prettier, Vitest, CI, GitHub repo.
 - [x] **1. Foundation** — routing, app layout, Dexie schema, CRUD for snippets, Monaco editor.
 - [x] **2. Sandbox** — iframe + worker architecture with JS execution, timeouts, stop button, output panel.
-- [ ] **3. Runtimes** — TypeScript and Python runtimes behind a common `Runtime` interface.
+- [x] **3. Runtimes** — TypeScript and Python runtimes behind a common `Runtime` interface.
 - [ ] **4. Organization** — folders, tags, favorites, trash, version history with diff.
 - [ ] **5. Search** — search index, query filters, command palette, keyboard shortcuts.
 - [ ] **6. Data & offline** — import/export, Gist import, templates, settings, PWA/offline.

@@ -25,9 +25,15 @@ The full product spec, security model, and milestone roadmap live in `docs/SPEC.
 
 ## Sandbox architecture (`src/sandbox/`)
 
-- `SandboxHost.ts` — app side: one hidden srcdoc iframe, one run at a time; timeout/Stop/output-limit remove the whole iframe (killing the worker). `getSandbox()` is the shared instance.
-- `runtime/frame.js` + `runtime/worker.js` — run inside the sandbox. They are plain JS imported with `?raw` and inlined into the iframe's `srcdoc` (see `srcdoc.ts`), so they must stay dependency-free and mirror the shapes in `protocol.ts` by hand. Their helpers are unit-tested by evaluating the raw source.
-- `srcdoc.ts` — builds the iframe document and its CSP (`connect-src 'none'` unless the snippet allows network). Blob workers inherit this CSP.
+- `SandboxHost.ts` — app side: one hidden srcdoc iframe, one run at a time; timeout/Stop/output-limit remove the whole iframe (killing its workers). `getSandbox()` is the shared instance. A run has two time limits: a generous _prepare_ limit until the sandbox reports `started` (runtime boot, package installs), then the snippet's own timeout.
+- `runtimes.ts` — the `Runtime` interface and one implementation per language (`RUNTIMES`). JS: `prepareJavaScript`. TS: Sucrase strips types (line-preserving), then JS. Python: parses `# requires:` comments.
+- `runtime/frame.js`, `runtime/worker.js` (JS/TS, classic worker from a blob: URL, fresh per run), `runtime/python-worker.js` (Pyodide, **module** worker from a **data:** URL — Pyodide rejects classic workers and module workers can't load from blob: URLs in an opaque-origin frame; stays warm between runs). All three are plain JS imported with `?raw` and inlined into the iframe's `srcdoc` (see `srcdoc.ts`), so they must stay dependency-free and mirror the shapes in `protocol.ts` by hand. Their helpers are unit-tested by evaluating the raw source.
+- `pythonAssets.ts` — the opaque-origin sandbox can't use the HTTP cache or fetch app files, so the Python worker patches `fetch` and relays requests (`asset-request`) to the host, which serves bundled Pyodide files or fetches from an allowlist (pinned Pyodide CDN, PyPI). Keep `PYODIDE_VERSION` in sync with the `pyodide` package (a test enforces it).
+- `srcdoc.ts` — builds the iframe document and its CSP (`connect-src 'none'` unless the snippet allows network). blob:/data: workers inherit this CSP (verified in Chrome, including the Python worker).
 - `prepareJavaScript.ts` — parses with acorn on the host (exact syntax-error positions) and rewrites a final expression into `export const __sniplab_result__ = (…)`; the snippet runs as an ES module via `import(blobUrl)`, so top-level `await` works.
-- A run ends with `done` once the module has evaluated and no tracked timers/fetches remain (like Node's event loop), or with `error`.
+- A JS run ends with `done` once the module has evaluated and no tracked timers/fetches remain (like Node's event loop), or with `error`. A Python run ends when `runPythonAsync` settles.
 - Known limitation: user code can call the worker's `postMessage` directly and fake output for its own run. That only affects its own output, never the app.
+
+## Dev notes
+
+- On Windows, Vite's watcher sometimes serves a stale in-between version of a module after several quick edits (symptom: "X is not defined" for something that exists). Restart the dev server.

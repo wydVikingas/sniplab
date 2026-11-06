@@ -1,11 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostMessage } from './protocol'
-import { formatDuration, SandboxHost, type RunRequest } from './SandboxHost'
+import type { PythonAssets } from './pythonAssets'
+import {
+  formatDuration,
+  SandboxHost,
+  type RunRequest,
+  type SandboxHostOptions,
+} from './SandboxHost'
+
+type RunMessage = Extract<HostMessage, { type: 'run' }>
 
 const request = (overrides: Partial<RunRequest> = {}): RunRequest => ({
+  language: 'javascript',
   code: 'console.log(1)',
   timeoutMs: 1_000,
   allowNetwork: false,
+  stdin: '',
   ...overrides,
 })
 
@@ -16,7 +26,7 @@ afterEach(() => {
 })
 
 /** A SandboxHost whose iframe we drive by hand, since jsdom doesn't run the sandbox. */
-function setup(options: { maxLogs?: number; bootTimeoutMs?: number } = {}) {
+function setup(options: SandboxHostOptions = {}) {
   const container = document.createElement('div')
   document.body.append(container)
   const host = new SandboxHost({ container, ...options })
@@ -30,34 +40,53 @@ function setup(options: { maxLogs?: number; bootTimeoutMs?: number } = {}) {
     if (!iframe?.contentWindow) throw new Error('No sandbox frame')
     return iframe
   }
-  const callbacks = { onLog: vi.fn(), onResult: vi.fn(), onError: vi.fn() }
+  const callbacks = { onLog: vi.fn(), onResult: vi.fn(), onError: vi.fn(), onStatus: vi.fn() }
 
   const send = (data: unknown, source: Window | null = frame().contentWindow) =>
     window.dispatchEvent(new MessageEvent('message', { data, source }))
 
-  /** Boot the current frame and return the run message the host posts to it. */
-  async function boot(): Promise<HostMessage> {
+  /** Wait for the frame, report it ready, and capture what the host posts to it. */
+  async function bootFrame() {
+    await vi.waitFor(() => expect(frames()).toHaveLength(1))
     const post = vi.spyOn(frame().contentWindow!, 'postMessage')
     send({ type: 'ready' })
+    return post
+  }
+
+  /** Boot the frame and return the run message the host posts to it. */
+  async function boot(): Promise<RunMessage> {
+    const post = await bootFrame()
     await vi.waitFor(() => expect(post).toHaveBeenCalled())
     const [message, targetOrigin] = post.mock.calls[0]!
     expect(targetOrigin).toBe('*')
-    return message as HostMessage
+    return message as RunMessage
   }
 
-  return { host, frames, frame, callbacks, send, boot }
+  /** Boot and report that user code started (so the run timeout applies). */
+  async function start(): Promise<RunMessage> {
+    const message = await boot()
+    send({ type: 'started', runId: message.runId })
+    return message
+  }
+
+  return { host, frames, frame, callbacks, send, bootFrame, boot, start }
 }
 
 describe('SandboxHost', () => {
   it('runs code in a locked-down iframe and relays output', async () => {
-    const { host, frame, callbacks, send, boot } = setup()
-    const handle = host.run(request({ code: 'console.log(1)\n1 + 1' }), callbacks)
+    const { host, frame, callbacks, send, start } = setup()
+    const handle = host.run(request({ code: 'console.log(1)\n1 + 1', stdin: 'a\nb' }), callbacks)
 
+    const message = await start()
     expect(frame().getAttribute('sandbox')).toBe('allow-scripts')
     expect(frame().srcdoc).toContain("connect-src 'none'")
-
-    const message = await boot()
-    expect(message).toMatchObject({ type: 'run', runtime: 'javascript', hasResult: true })
+    expect(message).toMatchObject({
+      type: 'run',
+      runtime: 'javascript',
+      hasResult: true,
+      stdin: 'a\nb',
+      packages: [],
+    })
     expect(message.source).toContain('export const __sniplab_result__ = (1 + 1);')
 
     const { runId } = message
@@ -71,11 +100,27 @@ describe('SandboxHost', () => {
     expect(callbacks.onError).not.toHaveBeenCalled()
   })
 
+  it('transpiles TypeScript before running it', async () => {
+    const { host, callbacks, boot } = setup()
+    host.run(request({ language: 'typescript', code: 'const n: number = 1\nn + 1' }), callbacks)
+    const message = await boot()
+    expect(message.runtime).toBe('javascript')
+    expect(message.source).not.toContain(': number')
+    expect(message.source).toContain('export const __sniplab_result__ = (n + 1);')
+  })
+
+  it('sends Python runs with their required packages', async () => {
+    const { host, callbacks, boot } = setup()
+    host.run(request({ language: 'python', code: '# requires: tabulate\nprint(1)' }), callbacks)
+    const message = await boot()
+    expect(message).toMatchObject({ runtime: 'python', packages: ['tabulate'] })
+  })
+
   it('ignores foreign, malformed and stale messages', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const { host, callbacks, send, boot } = setup()
+    const { host, callbacks, send, start } = setup()
     const handle = host.run(request(), callbacks)
-    const { runId } = await boot()
+    const { runId } = await start()
 
     const log = { type: 'log', runId, level: 'log', args: [{ t: 'string', v: 'x' }] }
     send(log, window) // wrong source
@@ -88,22 +133,49 @@ describe('SandboxHost', () => {
     await expect(handle.outcome).resolves.toMatchObject({ status: 'completed' })
   })
 
+  it('reports preparation status until user code starts', async () => {
+    const { host, callbacks, send, boot } = setup()
+    host.run(request({ language: 'python', code: 'print(1)' }), callbacks)
+    const { runId } = await boot()
+
+    send({ type: 'status', runId, text: 'Starting Python…' })
+    expect(callbacks.onStatus).toHaveBeenLastCalledWith('Starting Python…')
+    send({ type: 'started', runId })
+    expect(callbacks.onStatus).toHaveBeenLastCalledWith(null)
+    send({ type: 'status', runId, text: 'late' })
+    expect(callbacks.onStatus).not.toHaveBeenCalledWith('late')
+  })
+
   it('times out stuck code and tears down the frame', async () => {
-    const { host, frames, callbacks, boot } = setup()
+    const { host, frames, callbacks, start } = setup()
     const handle = host.run(request({ timeoutMs: 30 }), callbacks)
-    await boot()
+    await start()
 
     await expect(handle.outcome).resolves.toMatchObject({ status: 'timed-out' })
     expect(callbacks.onError).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'TimeoutError' }),
+      expect.objectContaining({
+        name: 'TimeoutError',
+        message: expect.stringContaining('timed out'),
+      }),
     )
     expect(frames()).toHaveLength(0)
   })
 
+  it('does not count runtime start-up against the run timeout', async () => {
+    const { host, callbacks, boot } = setup({ prepareTimeoutMs: { python: 30 } })
+    const handle = host.run(request({ language: 'python', timeoutMs: 10_000 }), callbacks)
+    await boot()
+    // Never "started": the separate start-up limit applies.
+    await expect(handle.outcome).resolves.toEqual({ status: 'timed-out', durationMs: 0 })
+    expect(callbacks.onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('Python took longer') }),
+    )
+  })
+
   it('stops a run on request and ignores its later messages', async () => {
-    const { host, frames, callbacks, send, boot } = setup()
+    const { host, frames, callbacks, send, start } = setup()
     const handle = host.run(request(), callbacks)
-    const { runId } = await boot()
+    const { runId } = await start()
     const stoppedFrame = frames()[0]!.contentWindow
 
     handle.stop()
@@ -115,9 +187,9 @@ describe('SandboxHost', () => {
   })
 
   it('starting a new run stops the previous one', async () => {
-    const { host, callbacks, boot } = setup()
+    const { host, callbacks, start } = setup()
     const first = host.run(request(), callbacks)
-    await boot()
+    await start()
     host.run(request(), callbacks)
     await expect(first.outcome).resolves.toMatchObject({ status: 'stopped' })
   })
@@ -133,9 +205,9 @@ describe('SandboxHost', () => {
   })
 
   it('maps runtime error positions back to the original code', async () => {
-    const { host, callbacks, send, boot } = setup()
+    const { host, callbacks, send, start } = setup()
     const handle = host.run(request({ code: 'boom()' }), callbacks)
-    const { runId } = await boot()
+    const { runId } = await start()
     const column = 'export const __sniplab_result__ = ('.length + 1
     send({
       type: 'error',
@@ -153,9 +225,9 @@ describe('SandboxHost', () => {
   })
 
   it('enforces the output limit even if the sandbox does not', async () => {
-    const { host, frames, callbacks, send, boot } = setup({ maxLogs: 2 })
+    const { host, frames, callbacks, send, start } = setup({ maxLogs: 2 })
     const handle = host.run(request(), callbacks)
-    const { runId } = await boot()
+    const { runId } = await start()
     for (let i = 0; i < 3; i++) send({ type: 'log', runId, level: 'log', args: [] })
 
     await expect(handle.outcome).resolves.toMatchObject({ status: 'failed' })
@@ -167,19 +239,20 @@ describe('SandboxHost', () => {
   })
 
   it('reuses the frame between runs and rebuilds it when network access changes', async () => {
-    const { host, frames, frame, callbacks, send, boot } = setup()
+    const { host, frames, frame, callbacks, send, start } = setup()
     const first = host.run(request(), callbacks)
-    const { runId } = await boot()
+    const { runId } = await start()
     send({ type: 'done', runId })
     await first.outcome
     const original = frame()
 
     host.run(request(), callbacks)
+    await new Promise((r) => setTimeout(r, 10))
     expect(frame()).toBe(original)
 
     host.run(request({ allowNetwork: true }), callbacks)
+    await vi.waitFor(() => expect(frame()).not.toBe(original))
     expect(frames()).toHaveLength(1)
-    expect(frame()).not.toBe(original)
     expect(frame().srcdoc).toContain('connect-src *')
   })
 
@@ -191,6 +264,61 @@ describe('SandboxHost', () => {
       expect.objectContaining({ name: 'SandboxError' }),
     )
     expect(frames()).toHaveLength(0)
+  })
+
+  it('prewarms the Python runtime', async () => {
+    const { host, bootFrame } = setup()
+    host.prewarm('python', false)
+    const post = await bootFrame()
+    await vi.waitFor(() =>
+      expect(post).toHaveBeenCalledWith({ type: 'prewarm', runtime: 'python' }, '*', []),
+    )
+  })
+
+  it('serves asset requests through PythonAssets and transfers the body', async () => {
+    const body = new ArrayBuffer(3)
+    const get = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('blocked')) throw new Error(`Blocked request to ${url}`)
+      return { status: 200, contentType: 'application/wasm', body }
+    })
+    const assets = { get, onProgress: null } as unknown as PythonAssets
+    const { host, send, bootFrame } = setup({ assets })
+    host.prewarm('python', false)
+    const post = await bootFrame()
+
+    send({
+      type: 'asset-request',
+      requestId: 1,
+      url: 'https://sniplab.invalid/pyodide/a',
+      accept: null,
+    })
+    send({ type: 'asset-request', requestId: 2, url: 'https://blocked.example/', accept: null })
+    await vi.waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        {
+          type: 'asset-response',
+          requestId: 1,
+          ok: true,
+          status: 200,
+          contentType: 'application/wasm',
+          body,
+        },
+        '*',
+        [body],
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        {
+          type: 'asset-response',
+          requestId: 2,
+          ok: false,
+          error: 'Blocked request to https://blocked.example/',
+        },
+        '*',
+        [],
+      ),
+    )
   })
 })
 

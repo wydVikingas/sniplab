@@ -17,7 +17,7 @@ Save, tag, and search your snippets, and run **JavaScript**, **TypeScript**, and
 
 ## Tech stack
 
-Vite · React · TypeScript · Tailwind CSS · Dexie (IndexedDB) · Monaco Editor · TanStack Router · Zustand · Zod · Vitest
+Vite · React · TypeScript · Tailwind CSS · Dexie (IndexedDB) · Monaco Editor · Pyodide · Sucrase · acorn · TanStack Router · Zustand · Zod · Vitest
 
 ## Getting started
 

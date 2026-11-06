@@ -358,6 +358,15 @@ function startWorker() {
     runId = String(message.runId)
     maxLogs = Number(message.maxLogs) || maxLogs
     moduleUrl = URL.createObjectURL(new Blob([message.source], { type: 'text/javascript' }))
+
+    // stdin: readInput() returns the next line, or null at end of input.
+    const stdin = typeof message.stdin === 'string' ? message.stdin.replace(/\r\n?/g, '\n') : ''
+    const lines = stdin === '' ? [] : stdin.replace(/\n$/, '').split('\n')
+    self.readInput = function readInput() {
+      return lines.length > 0 ? lines.shift() : null
+    }
+
+    post({ type: 'started', runId })
     try {
       const module = await import(moduleUrl)
       if (message.hasResult && !finished) {

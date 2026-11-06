@@ -3,7 +3,7 @@ import type { RunnerState } from './useCodeRunner'
 
 export function statusText(state: RunnerState): string {
   if (state.phase === 'idle') return ''
-  if (state.phase === 'running') return 'Running…'
+  if (state.phase === 'running') return state.detail ?? 'Running…'
   const { status, durationMs } = state.outcome
   const d = formatDuration(durationMs)
   switch (status) {

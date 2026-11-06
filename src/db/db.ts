@@ -15,6 +15,15 @@ export class SnipLabDB extends Dexie {
       folders: 'id, parentId',
       versions: 'id, snippetId, [snippetId+createdAt]',
     })
+    // v2: run settings gained `stdin`.
+    this.version(2).upgrade((tx) =>
+      tx
+        .table<Snippet, string>('snippets')
+        .toCollection()
+        .modify((snippet) => {
+          snippet.runSettings = { ...snippet.runSettings, stdin: snippet.runSettings.stdin ?? '' }
+        }),
+    )
   }
 }
 

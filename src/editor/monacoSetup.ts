@@ -24,4 +24,16 @@ const compilerOptions: monaco.typescript.CompilerOptions = {
 monaco.typescript.typescriptDefaults.setCompilerOptions(compilerOptions)
 monaco.typescript.javascriptDefaults.setCompilerOptions({ ...compilerOptions, allowJs: true })
 
+// Globals the sandbox provides to JS/TS snippets.
+const SANDBOX_GLOBALS = `
+/** Returns the next line of the snippet's standard input, or null when there is none left. */
+declare function readInput(): string | null
+`
+for (const defaults of [
+  monaco.typescript.typescriptDefaults,
+  monaco.typescript.javascriptDefaults,
+]) {
+  defaults.addExtraLib(SANDBOX_GLOBALS, 'file:///sniplab-globals.d.ts')
+}
+
 loader.config({ monaco })
