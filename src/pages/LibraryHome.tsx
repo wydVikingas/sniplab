@@ -1,5 +1,5 @@
 import { useSnippets } from '../db/hooks'
-import { useCreateSnippet } from '../lib/useCreateSnippet'
+import { useCreateSnippet } from '../lib/useLibrary'
 
 export function LibraryHome() {
   const snippets = useSnippets()

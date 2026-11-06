@@ -98,7 +98,7 @@ No user accounts beyond what sharing needs, no real-time collaboration, no serve
 - [x] **1. Foundation** — routing, app layout, Dexie schema, CRUD for snippets, Monaco editor.
 - [x] **2. Sandbox** — iframe + worker architecture with JS execution, timeouts, stop button, output panel.
 - [x] **3. Runtimes** — TypeScript and Python runtimes behind a common `Runtime` interface.
-- [ ] **4. Organization** — folders, tags, favorites, trash, version history with diff.
+- [x] **4. Organization** — folders, tags, favorites, trash, version history with diff.
 - [ ] **5. Search** — search index, query filters, command palette, keyboard shortcuts.
 - [ ] **6. Data & offline** — import/export, Gist import, templates, settings, PWA/offline.
 - [ ] **7. Sharing (optional)** — backend + share links.

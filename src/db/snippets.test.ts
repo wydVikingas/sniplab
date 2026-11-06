@@ -1,14 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db } from './db'
+import { createFolder } from './folders'
 import { snippetSchema } from './schema'
 import {
   DEFAULT_TITLE,
   createSnippet,
+  emptyTrash,
   getSnippet,
   listSnippets,
+  markOpened,
+  moveSnippet,
   moveToTrash,
+  restoreFromTrash,
+  setFavorite,
   updateSnippet,
 } from './snippets'
+import { saveVersion } from './versions'
 
 describe('snippet repository', () => {
   beforeEach(async () => {
@@ -80,5 +87,44 @@ describe('snippet repository', () => {
     expect(await getSnippet(id)).toBeUndefined()
     expect(await listSnippets()).toEqual([])
     expect((await db.snippets.get(id))?.deletedAt).toBe(1_000)
+  })
+
+  it('organizational changes do not bump updatedAt', async () => {
+    const { id } = await createSnippet()
+    const folder = await createFolder('F')
+    vi.setSystemTime(5_000)
+    await setFavorite(id, true)
+    await moveSnippet(id, folder.id)
+    await markOpened(id)
+    expect(await db.snippets.get(id)).toMatchObject({
+      favorite: true,
+      folderId: folder.id,
+      lastOpenedAt: 5_000,
+      updatedAt: 1_000,
+    })
+    await expect(moveSnippet(id, 'missing')).rejects.toThrow(/Folder not found/)
+  })
+
+  it('restores from the Trash, falling back to the top level if the folder is gone', async () => {
+    const folder = await createFolder('F')
+    const { id } = await createSnippet({ folderId: folder.id })
+    await moveToTrash(id)
+    await db.folders.delete(folder.id)
+    await restoreFromTrash(id)
+    expect(await getSnippet(id)).toMatchObject({ deletedAt: null, folderId: null })
+  })
+
+  it('deletes forever with version history, and empties the Trash', async () => {
+    const a = await createSnippet({ title: 'a' })
+    const b = await createSnippet({ title: 'b' })
+    const keep = await createSnippet({ title: 'keep' })
+    await saveVersion(a.id, a)
+    await saveVersion(keep.id, keep)
+    await moveToTrash(a.id)
+    await moveToTrash(b.id)
+
+    expect(await emptyTrash()).toBe(2)
+    expect((await db.snippets.toArray()).map((s) => s.title)).toEqual(['keep'])
+    expect(await db.versions.count()).toBe(1)
   })
 })

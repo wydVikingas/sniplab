@@ -17,11 +17,19 @@ export interface CodeEditorProps {
   theme: ColorScheme
   onChange: (value: string) => void
   onReady?: (api: EditorApi) => void
+  readOnly?: boolean
 }
 
 const MARKER_OWNER = 'sniplab-run'
 
-export default function CodeEditor({ value, language, theme, onChange, onReady }: CodeEditorProps) {
+export default function CodeEditor({
+  value,
+  language,
+  theme,
+  onChange,
+  onReady,
+  readOnly = false,
+}: CodeEditorProps) {
   const info = LANGUAGE_INFO[language]
   return (
     <Editor
@@ -66,6 +74,7 @@ export default function CodeEditor({ value, language, theme, onChange, onReady }
         fontSize: 14,
         minimap: { enabled: false },
         padding: { top: 12, bottom: 12 },
+        readOnly,
         scrollBeyondLastLine: false,
         tabSize: info.tabSize,
       }}

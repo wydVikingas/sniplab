@@ -30,6 +30,8 @@ export const snippetSchema = z.object({
   updatedAt: z.number().int(),
   /** Soft-delete marker: non-null means the snippet is in the Trash. */
   deletedAt: z.number().int().nullable(),
+  /** When the snippet was last opened in the editor (drives the "Recent" view). */
+  lastOpenedAt: z.number().int().nullable(),
   runSettings: runSettingsSchema,
 })
 export type Snippet = z.infer<typeof snippetSchema>

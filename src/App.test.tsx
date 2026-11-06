@@ -14,6 +14,12 @@ vi.mock('./editor/CodeEditor', () => ({
   ),
 }))
 
+vi.mock('./editor/CodeDiffEditor', () => ({
+  default: ({ original, modified }: { original: string; modified: string }) => (
+    <div data-testid="diff">{`${original} → ${modified}`}</div>
+  ),
+}))
+
 // Nor does the iframe sandbox; SandboxHost has its own tests.
 const fakeSandbox = vi.hoisted(() => ({ run: vi.fn(), prewarm: vi.fn() }))
 vi.mock('./sandbox/SandboxHost', async (importOriginal) => ({
@@ -153,6 +159,77 @@ describe('SnipLab app', () => {
     )
     finish({ status: 'completed', durationMs: 3 })
     expect(await screen.findByText('Finished in 3 ms')).toBeInTheDocument()
+  })
+
+  it('organizes snippets: favorite, folder, trash and restore', async () => {
+    const { id } = await createSnippet({ title: 'Quicksort' })
+    const router = renderApp(`/s/${id}`)
+    const library = await screen.findByRole('navigation', { name: 'Library' })
+    const list = () => screen.getByRole('navigation', { name: 'Snippets' })
+
+    // Favorite, then view Favorites.
+    const star = await screen.findByRole('button', { name: 'Favorite' })
+    fireEvent.click(star)
+    await waitFor(() => expect(star).toHaveAttribute('aria-pressed', 'true'))
+    fireEvent.click(within(library).getByRole('button', { name: /^Favorites/ }))
+    await waitFor(() => expect(router.state.location.search).toEqual({ view: 'favorites' }))
+    expect(within(list()).getByText('Quicksort')).toBeInTheDocument()
+
+    // Create a folder and move the snippet into it.
+    fireEvent.click(within(library).getByRole('button', { name: 'New folder' }))
+    const nameInput = await screen.findByRole('textbox', { name: 'Folder name' })
+    fireEvent.change(nameInput, { target: { value: 'Algorithms' } })
+    fireEvent.blur(nameInput)
+    const folderButton = await within(library).findByRole('button', { name: 'Algorithms' })
+    const [folder] = await db.folders.toArray()
+    fireEvent.change(screen.getByRole('combobox', { name: 'Folder' }), {
+      target: { value: folder!.id },
+    })
+    await waitFor(async () => expect((await db.snippets.get(id))?.folderId).toBe(folder!.id))
+    fireEvent.click(folderButton)
+    await waitFor(() => expect(router.state.location.search).toEqual({ folder: folder!.id }))
+    expect(within(list()).getByText('Quicksort')).toBeInTheDocument()
+
+    // Move to Trash; it leaves the folder and shows up in the Trash.
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Delete snippet?' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(
+      await within(list()).findByText('This folder is empty. Drag snippets here or create one.'),
+    ).toBeInTheDocument()
+    fireEvent.click(within(library).getByRole('button', { name: /^Trash/ }))
+    fireEvent.click(await within(list()).findByText('Quicksort'))
+
+    // Open it from the Trash and restore it.
+    expect(await screen.findByText(/This snippet is in the Trash/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Quicksort')
+    expect((await db.snippets.get(id))?.deletedAt).toBeNull()
+  })
+
+  it('saves versions with Ctrl+S and lists them in the history', async () => {
+    const { id } = await createSnippet({ code: 'v1' })
+    renderApp(`/s/${id}`)
+    await screen.findByRole('textbox', { name: 'Title' })
+
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+    expect(await screen.findByText('Version saved')).toBeInTheDocument()
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Code editor' }), {
+      target: { value: 'v2' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    const history = await screen.findByRole('dialog', { name: 'Version history' })
+    const versions = within(history).getByRole('list', { name: 'Saved versions' })
+    expect(within(versions).getAllByRole('button')).toHaveLength(1)
+    expect(await within(history).findByTestId('diff')).toHaveTextContent('v1 → v2')
+
+    fireEvent.click(within(history).getByRole('button', { name: 'Restore this version' }))
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Code editor' })).toHaveValue('v1'),
+    )
+    // The replaced code was kept as a version too.
+    await waitFor(async () => expect(await db.versions.count()).toBe(2))
   })
 
   it('shows a not-found message for unknown snippets', async () => {

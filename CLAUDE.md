@@ -23,6 +23,14 @@ The full product spec, security model, and milestone roadmap live in `docs/SPEC.
 - The app talks to the sandbox only via the typed postMessage protocol; every message from the sandbox is Zod-validated on the host and checked against the active run id.
 - Every execution has a timeout that terminates the worker; the editor must stay responsive during infinite loops.
 
+## Data & library conventions
+
+- IndexedDB schema changes need a new `this.version(n).upgrade(...)` in `src/db/db.ts` plus a test in `db.test.ts` (current: v3).
+- `updateSnippet` is for content edits and bumps `updatedAt`; organizational changes (favorite, folder, trash, `lastOpenedAt`) go through dedicated functions in `src/db/snippets.ts` that don't.
+- Trash is a soft delete (`deletedAt`); only `deleteForever`/`emptyTrash` remove data, and they also remove the snippet's versions. Deleting a folder moves its contents up a level.
+- The list's current view (folder, tag, favorites, recent, trash) lives in URL search params on the root route (`src/lib/libraryFilter.ts`); `applyFilter`/`libraryCounts` derive everything from one live query of all snippets.
+- Layout: library nav (≥ lg, drawer below) · snippet list · editor. The editor keeps content in a local draft (autosaved); favorite/folder are read live from the DB.
+
 ## Sandbox architecture (`src/sandbox/`)
 
 - `SandboxHost.ts` — app side: one hidden srcdoc iframe, one run at a time; timeout/Stop/output-limit remove the whole iframe (killing its workers). `getSandbox()` is the shared instance. A run has two time limits: a generous _prepare_ limit until the sandbox reports `started` (runtime boot, package installs), then the snippet's own timeout.

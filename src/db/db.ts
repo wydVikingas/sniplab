@@ -24,6 +24,15 @@ export class SnipLabDB extends Dexie {
           snippet.runSettings = { ...snippet.runSettings, stdin: snippet.runSettings.stdin ?? '' }
         }),
     )
+    // v3: snippets gained `lastOpenedAt` (the "Recent" view).
+    this.version(3).upgrade((tx) =>
+      tx
+        .table<Snippet, string>('snippets')
+        .toCollection()
+        .modify((snippet) => {
+          snippet.lastOpenedAt ??= null
+        }),
+    )
   }
 }
 
