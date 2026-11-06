@@ -18,6 +18,7 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-router": "^1.170.46",
+    "acorn": "^8.19.0",
     "dexie": "^4.4.7",
     "dexie-react-hooks": "^4.4.0",
     "monaco-editor": "^0.57.0",

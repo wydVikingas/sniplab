@@ -26,7 +26,7 @@ User code must never access the app's IndexedDB, DOM, cookies, or localStorage, 
 
 - The main app creates an `<iframe sandbox="allow-scripts">` (**no** `allow-same-origin`) loaded via `srcdoc`, so it has an opaque origin.
 - Inside that iframe, a Web Worker runs the actual user code (JS or Pyodide). The iframe only relays messages.
-- Communication is `postMessage` only, with a typed message protocol defined in one shared module (`run`, `stdout`, `stderr`, `result`, `error`, `done`) and validated with Zod on both sides.
+- Communication is `postMessage` only, with a typed message protocol defined in one shared module (`src/sandbox/protocol.ts`: `ready`, `run`, `log`, `result`, `error`, `done`). Everything arriving from the sandbox is validated with Zod on the host; the sandbox scripts are plain JS served verbatim and do structural checks.
 - Timeout (default 5s, configurable per snippet, max 30s): on expiry the worker is terminated and the sandbox iframe recreated. Infinite loops must not freeze the editor.
 - A strict Content-Security-Policy inside the sandbox; network access from user code disabled by default with a per-snippet "allow network" toggle that is clearly labelled.
 - Output is capped (e.g. 1 MB / 10,000 lines) to prevent memory blowups.
@@ -96,7 +96,7 @@ No user accounts beyond what sharing needs, no real-time collaboration, no serve
 
 - [x] **0. Setup** — Vite + React + TS scaffold, Tailwind, oxlint, Prettier, Vitest, CI, GitHub repo.
 - [x] **1. Foundation** — routing, app layout, Dexie schema, CRUD for snippets, Monaco editor.
-- [ ] **2. Sandbox** — iframe + worker architecture with JS execution, timeouts, stop button, output panel.
+- [x] **2. Sandbox** — iframe + worker architecture with JS execution, timeouts, stop button, output panel.
 - [ ] **3. Runtimes** — TypeScript and Python runtimes behind a common `Runtime` interface.
 - [ ] **4. Organization** — folders, tags, favorites, trash, version history with diff.
 - [ ] **5. Search** — search index, query filters, command palette, keyboard shortcuts.

@@ -5,12 +5,20 @@ import { db } from './db/db'
 import { createSnippet, listSnippets } from './db/snippets'
 import type { CodeEditorProps } from './editor/CodeEditor'
 import { createAppRouter } from './router'
+import type { RunCallbacks, RunRequest } from './sandbox/SandboxHost'
 
 // Monaco doesn't run in jsdom; a textarea stands in for it.
 vi.mock('./editor/CodeEditor', () => ({
   default: ({ value, onChange }: CodeEditorProps) => (
     <textarea aria-label="Code editor" value={value} onChange={(e) => onChange(e.target.value)} />
   ),
+}))
+
+// Nor does the iframe sandbox; SandboxHost has its own tests.
+const fakeSandbox = vi.hoisted(() => ({ run: vi.fn(), prewarm: vi.fn() }))
+vi.mock('./sandbox/SandboxHost', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./sandbox/SandboxHost')>()),
+  getSandbox: () => fakeSandbox,
 }))
 
 beforeAll(() => {
@@ -90,6 +98,33 @@ describe('SnipLab app', () => {
     fireEvent.change(filter, { target: { value: 'sorting' } })
     expect(within(nav).getByText('Quicksort')).toBeInTheDocument()
     expect(within(nav).queryByText('Fetch JSON')).not.toBeInTheDocument()
+  })
+
+  it('runs a JavaScript snippet and shows its output', async () => {
+    fakeSandbox.run.mockImplementation((_request: RunRequest, callbacks: RunCallbacks) => {
+      callbacks.onLog('log', [{ t: 'string', v: 'hello from the sandbox' }])
+      callbacks.onResult({ t: 'number', v: '42' })
+      return { outcome: Promise.resolve({ status: 'completed', durationMs: 12 }), stop: vi.fn() }
+    })
+    const { id } = await createSnippet({ code: 'console.log(1)' })
+    renderApp(`/s/${id}`)
+
+    fireEvent.click(await screen.findByRole('button', { name: '▶ Run' }))
+
+    expect(await screen.findByText('hello from the sandbox')).toBeInTheDocument()
+    expect(screen.getByText('42')).toBeInTheDocument()
+    expect(await screen.findByText('Finished in 12 ms')).toBeInTheDocument()
+    expect(fakeSandbox.run).toHaveBeenCalledWith(
+      { code: 'console.log(1)', timeoutMs: 5_000, allowNetwork: false },
+      expect.anything(),
+    )
+  })
+
+  it('disables Run for languages the sandbox cannot execute yet', async () => {
+    const { id } = await createSnippet({ language: 'python' })
+    renderApp(`/s/${id}`)
+    expect(await screen.findByRole('button', { name: '▶ Run' })).toBeDisabled()
+    expect(screen.getByText(/Running Python isn't supported yet/)).toBeInTheDocument()
   })
 
   it('shows a not-found message for unknown snippets', async () => {

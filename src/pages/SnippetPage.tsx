@@ -1,15 +1,35 @@
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { OutputPanel } from '../components/output/OutputPanel'
+import { SplitPane, type SplitPaneSide } from '../components/SplitPane'
 import { useSnippet } from '../db/hooks'
-import { LANGUAGES, type Language, type Snippet, type SnippetPatch } from '../db/schema'
+import {
+  LANGUAGES,
+  type Language,
+  type RunSettings,
+  type Snippet,
+  type SnippetPatch,
+} from '../db/schema'
 import { moveToTrash, updateSnippet } from '../db/snippets'
+import type { EditorApi } from '../editor/CodeEditor'
 import { EditorLoading } from '../editor/EditorLoading'
 import { createDebouncedSaver, type SaveStatus } from '../lib/debouncedSaver'
 import { LANGUAGE_INFO } from '../lib/languages'
 import { formatTags, parseTags } from '../lib/tags'
 import { useColorScheme } from '../lib/useColorScheme'
+import { useCodeRunner } from '../runner/useCodeRunner'
+import { getSandbox } from '../sandbox/SandboxHost'
 import { NotFound } from './NotFound'
+
+/** Languages the sandbox can execute so far. */
+const RUNNABLE: ReadonlySet<Language> = new Set(['javascript'])
+
+function cannotRunReason(language: Language): string | null {
+  return RUNNABLE.has(language)
+    ? null
+    : `Running ${LANGUAGE_INFO[language].label} isn't supported yet — only JavaScript for now.`
+}
 
 // Monaco is large: load it only when a snippet is opened.
 const CodeEditor = lazy(() => import('../editor/CodeEditor'))
@@ -32,6 +52,7 @@ interface Draft {
   language: Language
   code: string
   tagsInput: string
+  runSettings: RunSettings
 }
 
 function toDraft(snippet: Snippet): Draft {
@@ -41,6 +62,7 @@ function toDraft(snippet: Snippet): Draft {
     language: snippet.language,
     code: snippet.code,
     tagsInput: formatTags(snippet.tags),
+    runSettings: snippet.runSettings,
   }
 }
 
@@ -51,6 +73,7 @@ function toPatch(draft: Draft): SnippetPatch {
     language: draft.language,
     code: draft.code,
     tags: parseTags(draft.tagsInput),
+    runSettings: draft.runSettings,
   }
 }
 
@@ -79,24 +102,70 @@ function SnippetEditor({ initial }: { initial: Snippet }) {
       setStatus,
     ),
   )
+  const runner = useCodeRunner()
+  const editorApiRef = useRef<EditorApi | null>(null)
+  const [mobilePane, setMobilePane] = useState<SplitPaneSide>('first')
+  const runReason = cannotRunReason(draft.language)
 
-  // Save pending edits when leaving the snippet or the page, and on Ctrl/Cmd+S.
+  const runCode = () => {
+    const { code, language, runSettings } = draftRef.current
+    if (cannotRunReason(language)) return
+    editorApiRef.current?.setErrorMarker(null)
+    setMobilePane('second')
+    void runner.run({ code, ...runSettings })
+  }
+  const runCodeRef = useRef(runCode)
+  useEffect(() => {
+    runCodeRef.current = runCode
+  })
+
+  // Shortcuts: Ctrl/Cmd+S saves, Ctrl/Cmd+Enter runs. Listening in the capture phase on
+  // window handles them before Monaco (which would otherwise insert a line on Ctrl+Enter).
+  // Pending edits are also saved when leaving the snippet or the page.
   useEffect(() => {
     const flush = () => void saver.flush()
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (e.key.toLowerCase() === 's') {
         e.preventDefault()
         flush()
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        e.stopPropagation()
+        runCodeRef.current()
       }
     }
-    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
     window.addEventListener('pagehide', flush)
     return () => {
-      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('pagehide', flush)
       flush()
     }
   }, [saver])
+
+  // Boot the sandbox in the background so the first run starts instantly.
+  const { allowNetwork } = draft.runSettings
+  useEffect(() => {
+    if (runReason === null) getSandbox().prewarm(allowNetwork)
+  }, [runReason, allowNetwork])
+
+  // Underline the failing line in the editor.
+  const firstError = runner.entries.find((e) => e.kind === 'error' && e.error.line !== null)
+  useEffect(() => {
+    if (firstError?.kind !== 'error' || firstError.error.line === null) return
+    const { name, message, line, column } = firstError.error
+    editorApiRef.current?.setErrorMarker({
+      line,
+      column: column ?? 1,
+      message: `${name}: ${message}`,
+    })
+  }, [firstError])
+
+  const jumpTo = (line: number, column: number) => {
+    setMobilePane('first')
+    editorApiRef.current?.revealPosition(line, column)
+  }
 
   // Always derive from the ref so rapid edits (e.g. Monaco keystrokes) never use a stale draft.
   const setDraftFields = (changes: Partial<Draft>) => {
@@ -187,16 +256,42 @@ function SnippetEditor({ initial }: { initial: Snippet }) {
         />
       </div>
 
-      <div className="min-h-64 flex-1">
-        <Suspense fallback={<EditorLoading />}>
-          <CodeEditor
-            value={draft.code}
-            language={draft.language}
-            theme={scheme}
-            onChange={(code) => update({ code })}
+      <SplitPane
+        storageKey="sniplab:editor-split"
+        firstLabel="Code"
+        secondLabel="Output"
+        mobileActive={mobilePane}
+        onMobileActiveChange={setMobilePane}
+        first={
+          <div className="min-h-64 flex-1">
+            <Suspense fallback={<EditorLoading />}>
+              <CodeEditor
+                value={draft.code}
+                language={draft.language}
+                theme={scheme}
+                onChange={(code) => {
+                  editorApiRef.current?.setErrorMarker(null)
+                  update({ code })
+                }}
+                onReady={(api) => (editorApiRef.current = api)}
+              />
+            </Suspense>
+          </div>
+        }
+        second={
+          <OutputPanel
+            entries={runner.entries}
+            state={runner.state}
+            cannotRunReason={runReason}
+            runSettings={draft.runSettings}
+            onRun={runCode}
+            onStop={runner.stop}
+            onClear={runner.clear}
+            onRunSettingsChange={(runSettings) => update({ runSettings })}
+            onJumpTo={jumpTo}
           />
-        </Suspense>
-      </div>
+        }
+      />
 
       <ConfirmDialog
         open={confirmOpen}
