@@ -95,7 +95,7 @@ No user accounts beyond what sharing needs, no real-time collaboration, no serve
 ## Milestones
 
 - [x] **0. Setup** — Vite + React + TS scaffold, Tailwind, oxlint, Prettier, Vitest, CI, GitHub repo.
-- [ ] **1. Foundation** — routing, app layout, Dexie schema, CRUD for snippets, Monaco editor.
+- [x] **1. Foundation** — routing, app layout, Dexie schema, CRUD for snippets, Monaco editor.
 - [ ] **2. Sandbox** — iframe + worker architecture with JS execution, timeouts, stop button, output panel.
 - [ ] **3. Runtimes** — TypeScript and Python runtimes behind a common `Runtime` interface.
 - [ ] **4. Organization** — folders, tags, favorites, trash, version history with diff.
